@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Win32-IEHistory
-version:             0.01
+version:             0.02
 abstract:            parse Internet Explorer's history index.dat
 license:             perl
 generated_by:        ExtUtils::MakeMaker version 6.36

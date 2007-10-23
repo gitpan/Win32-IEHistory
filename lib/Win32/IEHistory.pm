@@ -4,11 +4,10 @@ use strict;
 use warnings;
 use Carp;
 use Win32::IEHistory::FileTime;
-use File::Spec;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
-use constant BADFOOD => chr(0x0d).chr(0xF0).chr(0xAD).chr(0x0B);
+use constant BADFOOD => chr(0x0D).chr(0xF0).chr(0xAD).chr(0x0B);
 
 sub new {
   my $class = shift;
@@ -17,8 +16,7 @@ sub new {
   $self->_read_file( @_ );
   $self->_version_check;
   $self->_size_check;
-  $self->_read_hashes;
-  $self->_read_entries;
+  $self->_get_pointer_to_first_hash;
 
   $self;
 }
@@ -53,26 +51,25 @@ sub _size_check {
   }
 }
 
-sub _read_hashes {
+sub _get_pointer_to_first_hash {
   my $self = shift;
 
-  my $first_offset = _to_int( $self->_read );
-
-  $self->__read_hashes( $first_offset );
+  $self->{_from} = _to_int( $self->_read );
 }
 
-sub __read_hashes {
-  my ($self, $hash_start) = @_;
+sub _read_hashes {
+  my ($self, $target, %options) = @_;
 
-  my @entries;
-  while( $hash_start ) {
-    unless ( $self->_read_from( $hash_start ) eq 'HASH' ) {
+  my $pointer = $self->{_from};
+
+  while( $pointer ) {
+    unless ( $self->_read_from( $pointer ) eq 'HASH' ) {
       croak "index file seems broken: HASH not found";
     }
     my $hash_length = _to_int( $self->_read );
     my $next_hash   = _to_int( $self->_read );
     my $unknown     = _to_int( $self->_read );
-    my $hash_end    = $hash_start + ( $hash_length * 0x80 );
+    my $hash_end    = $pointer + ( $hash_length * 0x80 );
 
     while ( $self->{_pos} < $hash_end ) {
       my ( $hashkey, $offset ) = ( $self->_read, $self->_read );
@@ -88,69 +85,88 @@ sub __read_hashes {
       next if $tag eq BADFOOD;
 
       if ( $tag =~ /^(?:URL|REDR|LEAK)/ ) {
-        push @entries, $int_offset;
+        next if $target && $target ne $tag;
+
+        my $pos = $self->{_pos};
+        $self->_read_entry( $int_offset, %options );
+        $self->{_pos} = $pos;
       }
     }
-    $hash_start = $next_hash or last;
+    $pointer = $next_hash or last;
   }
-  $self->{_entries} = \@entries;
 }
 
-sub _read_entries {
+sub _read_entry {
+  my ($self, $offset, %options) = @_;
+
+  my $tag = $self->_read_from( $offset );
+     $tag =~ s/ $//;
+  my $class = 'Win32::IEHistory::'.$tag;
+
+  my $item;
+  if ( $tag eq 'REDR' ) {
+    my $block   = $self->_read;
+    my $unknown = $self->_read(8);
+    my $url     = $self->_read_string;
+
+    $item = { url => $url };
+  }
+  if ( $tag eq 'URL' or $tag eq 'LEAK' ) {
+    my $block              = $self->_read;
+    my $last_modified      = filetime( $self->_read(8) );
+    my $last_accessed      = filetime( $self->_read(8) );
+    my $maybe_expire       = $self->_read(8);
+    my $maybe_filesize     = $self->_read(8);
+    my $unknown            = $self->_read(20);
+    my $offset_to_filename = _to_int( $self->_read );
+    my $unknown2           = $self->_read;
+    my $offset_to_headers  = _to_int( $self->_read );
+    my $unknown3           = $self->_read(32);
+    my $url                = $self->_read_string;
+    my $filename           = $offset_to_filename
+      ? $self->_read_string_from( $offset + $offset_to_filename )
+      : '';
+    my $headers            = $offset_to_headers
+      ? $self->_read_string_from( $offset + $offset_to_headers )
+      : '';
+
+    $item = {
+      url           => $url,
+      filename      => $filename,
+      headers       => $headers,
+      filesize      => $maybe_filesize,
+      last_modified => $last_modified,
+      last_accessed => $last_accessed,
+    };
+  }
+  return unless $item;
+
+  my $object = bless $item, $class;
+  if ( $options{callback} ) {
+    my $ret = $options{callback}->( $object );
+    return unless $ret;
+  }
+
+  push @{ $self->{$tag} ||= [] }, $object;
+}
+
+sub urls  {
   my $self = shift;
-
-  foreach my $entry ( @{ $self->{_entries} || [] } ) {
-    my $tag = $self->_read_from( $entry );
-       $tag =~ s/ $//;
-    my $class = 'Win32::IEHistory::'.$tag;
-
-    my $item;
-    if ( $tag eq 'REDR' ) {
-      my $block   = $self->_read;
-      my $unknown = $self->_read(8);
-      my $url     = $self->_read_string;
-
-      $item = { url => $url };
-    }
-    if ( $tag eq 'URL' or $tag eq 'LEAK' ) {
-      my $class = "Win32::IEHistory\::$tag";
-
-      my $block              = $self->_read;
-      my $last_modified      = filetime( $self->_read(8) );
-      my $last_accessed      = filetime( $self->_read(8) );
-      my $maybe_expire       = $self->_read(8);
-      my $maybe_filesize     = $self->_read(8);
-      my $unknown            = $self->_read(20);
-      my $offset_to_filename = _to_int( $self->_read );
-      my $unknown2           = $self->_read;
-      my $offset_to_headers  = _to_int( $self->_read );
-      my $unknown3           = $self->_read(32);
-      my $url                = $self->_read_string;
-      my $filename           = $offset_to_filename
-        ? $self->_read_string_from( $entry + $offset_to_filename )
-        : '';
-      my $headers            = $offset_to_headers
-        ? $self->_read_string_from( $entry + $offset_to_headers )
-        : '';
-
-      $item = {
-        url           => $url,
-        filename      => $filename,
-        headers       => $headers,
-        filesize      => $maybe_filesize,
-        last_modified => $last_modified,
-        last_accessed => $last_accessed,
-      };
-    }
-    next unless $item;
-
-    push @{ $self->{$tag} ||= [] }, bless $item, $class;
-  }
+  $self->_read_hashes( 'URL ', @_ );
+  return @{ $self->{URL} || [] };
 }
 
-sub urls  { @{ shift->{URL}  || [] } }
-sub redrs { @{ shift->{REDR} || [] } }
-sub leaks { @{ shift->{LEAK} || [] } }
+sub redrs  {
+  my $self = shift;
+  $self->_read_hashes( 'REDR', @_ );
+  return @{ $self->{REDR} || [] };
+}
+
+sub leaks  {
+  my $self = shift;
+  $self->_read_hashes( 'LEAK', @_ );
+  return @{ $self->{LEAK} || [] };
+}
 
 sub _to_int {
   my $dword = shift;
@@ -173,31 +189,31 @@ sub _read {
 }
 
 sub _read_from {
-  my ($self, $start, $length) = @_;
-  $self->{_pos} = $start;
+  my ($self, $from, $length) = @_;
+  $self->{_pos} = $from;
   $self->_read( $length );
 }
 
 sub _read_string {
   my $self = shift;
-  my $start = $self->{_pos};
-  my $end   = index( $self->{_data}, "\000", $start );
-  my $str   = substr( $self->{_data}, $start, $end - $start );
-  $self->{_pos} = $end + 1;
+  my $from = $self->{_pos};
+  my $to   = index( $self->{_data}, "\000", $from );
+  my $str  = substr( $self->{_data}, $from, $to - $from );
+  $self->{_pos} = $to + 1;
   return $str;
 }
 
 sub _read_string_from {
-  my ($self, $start) = @_;
-  $self->{_pos} = $start;
+  my ($self, $from) = @_;
+  $self->{_pos} = $from;
   $self->_read_string;
 }
 
 sub _test_from {
-  my ($self, $start, $length) = @_;
+  my ($self, $from, $length) = @_;
   $length ||= 4;
-  $start    = $self->{_pos} unless defined $start;
-  return substr( $self->{_data}, $start, $length );
+  $from     = $self->{_pos} unless defined $from;
+  return substr( $self->{_data}, $from, $length );
 }
 
 package #
@@ -207,7 +223,7 @@ use strict;
 use warnings;
 use base qw( Class::Accessor::Fast );
 
-__PACKAGE__->mk_ro_accessors(qw(
+__PACKAGE__->mk_accessors(qw(
   url filename headers filesize last_modified last_accessed
 ));
 
@@ -218,7 +234,7 @@ use strict;
 use warnings;
 use base qw( Class::Accessor::Fast );
 
-__PACKAGE__->mk_ro_accessors(qw(
+__PACKAGE__->mk_accessors(qw(
   url filename headers filesize last_modified last_accessed
 ));
 
@@ -229,7 +245,7 @@ use strict;
 use warnings;
 use base qw( Class::Accessor::Fast );
 
-__PACKAGE__->mk_ro_accessors(qw( url ));
+__PACKAGE__->mk_accessors(qw( url ));
 
 1;
 
@@ -247,6 +263,22 @@ Win32::IEHistory - parse Internet Explorer's history index.dat
       print $url->url, "\n";
     }
 
+    Or, you can use callback function if you care memory usage.
+
+    use Win32::IEHistory;
+    my $index = Win32::IEHistory->new( 'index.dat' );
+    $index->urls( callback => \&callback )
+
+    sub callback {
+      my $entry = shift;
+      my $url = $entry->url;
+         $url =~ s/^Visited: //;
+      $entry->url( $url );
+
+      print $_[0]->url, "\n";
+      return;  # to prevent the entry from being kept in the object
+    }
+
 =head1 DESCRIPTION
 
 This parses so-called "Client UrlCache MMF Ver 5.2" index.dat files, which are used to store Internet Explorer's history, cache, and cookies. As of writing this, I've only tested on Win2K + IE 6.0, but I hope this also works with some of the other versions of OS/Internet Explorer. However, note that this is not based on the official/public MSDN specification, but on a hack on the web. So, caveat emptor in every sense, especially for the redr entries ;)
@@ -261,15 +293,19 @@ receives a path to an 'index.dat', and parses it to create an object.
 
 =head2 urls
 
-returns URL entries in the 'index.dat' file. Each entry has url, filename, headers, filesize, last_modified, last_accessed accessors (note that some of them would return meaningless values).
+returns URL entries in the 'index.dat' file. Each entry has url, filename, headers, filesize, last_modified, last_accessed accessors (note that some of them would return meaningless values). As of 0.02, it can receive a callback function. See below.
 
 =head2 leaks
 
-returns LEAK entries (if any) in the 'index.dat' file. Each entry has url, filename, headers, filesize, last_modified, last_accessed accessors (note that some of them would return meaningless values).
+returns LEAK entries (if any) in the 'index.dat' file. Each entry has url, filename, headers, filesize, last_modified, last_accessed accessors (note that some of them would return meaningless values). As of 0.02, it can receive a callback function.
 
 =head2 redrs
 
-returns REDR entries (if any) in the 'index.dat' file. Each entry has a url accessor.
+returns REDR entries (if any) in the 'index.dat' file. Each entry has a url accessor. As of 0.02, it can receive a callback function.
+
+=head1 CALLBACK
+
+Three methods shown above return all the entries found in the index by default, but this may eat lots of memory especially if you use IE as a main browser. As of 0.02, those methods may receive a callback function, which will take an entry for the first (and only, as of writing this) argument. If the callback returns true, the entry will be stored in the ::IEHistory object, and if the callback returns false, the entry will be discarded after the callback is executed.
 
 =head1 SEE ALSO
 

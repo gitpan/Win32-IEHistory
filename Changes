@@ -1,5 +1,10 @@
 Revision history for Win32-IEHistory
 
+0.02 2007/10/24
+  - largely refactored to diminish memory usage
+  - now urls/redrs/leaks accept a callback function
+  - accessors of each entry are now writable
+
 0.01 2007/10/22
   - initial release
 
