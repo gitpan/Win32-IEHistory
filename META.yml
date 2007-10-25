@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Win32-IEHistory
-version:             0.02
+version:             0.03
 abstract:            parse Internet Explorer's history index.dat
 license:             perl
 generated_by:        ExtUtils::MakeMaker version 6.36
@@ -9,6 +9,7 @@ requires:
     Class::Accessor::Fast:         0
     DateTime:                      0
     Math::BigInt:                  0
+    Test::UseAllModules:           0
     Win32::TieRegistry:            0
 meta-spec:
     url:     http://module-build.sourceforge.net/META-spec-v1.2.html

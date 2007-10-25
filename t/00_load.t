@@ -1,12 +1,13 @@
 use strict;
-use Test::More qw( no_plan );
+use Test::UseAllModules;
 
 BEGIN {
-  use_ok('Win32::IEHistory');
-  use_ok('Win32::FileTime');
-  if ( $^O eq 'MSWin32' ) {
-    use_ok('Win32::IEHistory::Cache');
-    use_ok('Win32::IEHistory::Cookies');
-    use_ok('Win32::IEHistory::History');
-  }
+  all_uses_ok except =>
+    ( $^O ne 'MSWin32' )
+      ? qw(
+          Win32::IEHistory::Cache
+          Win32::IEHistory::Cookies
+          Win32::IEHistory::History
+        )
+      : ();
 }

@@ -1,5 +1,11 @@
 Revision history for Win32-IEHistory
 
+0.03 2007/10/25
+  - no new feature
+  - switched to Test::UseAllModules to prevent me from listing
+    a wrong module in the t/00_load.t. orz
+  - fixed a bug in the synopsis
+
 0.02 2007/10/24
   - largely refactored to diminish memory usage
   - now urls/redrs/leaks accept a callback function

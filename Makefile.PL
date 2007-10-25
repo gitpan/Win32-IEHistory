@@ -11,6 +11,7 @@ WriteMakefile(
     'Class::Accessor::Fast' => 0,
     'DateTime'              => 0,
     'Math::BigInt'          => 0,
+    'Test::UseAllModules'   => 0,
     ( $^O eq 'MSWin32'
       ? ( 'Win32::TieRegistry' => 0 )
       : ()

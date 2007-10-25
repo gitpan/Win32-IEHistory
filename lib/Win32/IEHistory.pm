@@ -5,7 +5,7 @@ use warnings;
 use Carp;
 use Win32::IEHistory::FileTime;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use constant BADFOOD => chr(0x0D).chr(0xF0).chr(0xAD).chr(0x0B);
 
@@ -275,7 +275,7 @@ Win32::IEHistory - parse Internet Explorer's history index.dat
          $url =~ s/^Visited: //;
       $entry->url( $url );
 
-      print $_[0]->url, "\n";
+      print $entry->url, "\n";
       return;  # to prevent the entry from being kept in the object
     }
 
